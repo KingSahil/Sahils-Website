@@ -1,0 +1,36 @@
+{
+  "name": "sahil-gaming-hub",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "pwa-build": "vite build && npx cap copy && npx cap sync",
+    "android": "npx cap open android",
+    "ios": "npx cap open ios",
+    "capacitor:init": "npx cap init 'Sahil Gaming Hub' 'com.sahil.gaminghub'",
+    "capacitor:add-android": "npx cap add android",
+    "capacitor:sync": "npx cap sync"
+  },
+  "devDependencies": {
+    "vite": "^7.0.6"
+  },
+  "optionalDependencies": {
+    "@capacitor/android": "^5.7.8",
+    "@capacitor/cli": "^5.7.8",
+    "@capacitor/core": "^5.7.8"
+  },
+  "keywords": [
+    "pwa",
+    "games",
+    "mobile-app",
+    "web-app"
+  ],
+  "author": "Sahil",
+  "description": "A modern gaming hub with interactive games and tools",
+  "dependencies": {
+    "firebase": "^12.0.0"
+  }
+}

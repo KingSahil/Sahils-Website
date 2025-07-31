@@ -1,0 +1,8 @@
+{
+  "appId": "com.sahil.gaminghub",
+  "appName": "Gaming Hub",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

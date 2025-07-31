@@ -1,0 +1,29 @@
+<!-- Favicon version - simplified for small sizes -->
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="favicon-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea"/>
+      <stop offset="50%" style="stop-color:#764ba2"/>
+      <stop offset="100%" style="stop-color:#f093fb"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Main rounded square -->
+  <rect width="32" height="32" rx="6" fill="url(#favicon-gradient)"/>
+  
+  <!-- Simple game controller -->
+  <g transform="translate(16, 16)">
+    <!-- Controller body -->
+    <ellipse cx="0" cy="1" rx="8" ry="4" fill="#ffffff" opacity="0.9"/>
+    
+    <!-- D-pad -->
+    <g transform="translate(-4, 1)">
+      <rect x="-1.5" y="-0.5" width="3" height="1" fill="#667eea"/>
+      <rect x="-0.5" y="-1.5" width="1" height="3" fill="#667eea"/>
+    </g>
+    
+    <!-- Buttons -->
+    <circle cx="3" cy="0" r="1" fill="#3b82f6"/>
+    <circle cx="4" cy="2" r="1" fill="#ef4444"/>
+  </g>
+</svg>
