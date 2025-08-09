@@ -10,9 +10,10 @@ const firebaseConfig = {
 
 // Production debugging and error handling
 const isProduction = window.location.hostname !== 'localhost';
+const isElectron = window.location.protocol === 'file:';
 const currentDomain = window.location.hostname;
 
-console.log(`🔥 Initializing Firebase for ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'}: ${currentDomain}`);
+console.log(`🔥 Initializing Firebase for ${isProduction ? 'PRODUCTION' : 'DEVELOPMENT'} ${isElectron ? '(Electron)' : '(Web)'}: ${currentDomain}`);
 
 // Initialize Firebase with error handling
 let app, auth, googleProvider;
@@ -26,14 +27,25 @@ try {
   auth = firebase.auth();
   console.log('✅ Firebase Auth initialized successfully');
   
-  // Google Auth Provider with enhanced configuration
+  // Google Auth Provider with enhanced configuration for Electron
   googleProvider = new firebase.auth.GoogleAuthProvider();
   googleProvider.addScope('email');
   googleProvider.addScope('profile');
-  googleProvider.setCustomParameters({
-    prompt: 'select_account'
-  });
-  console.log('✅ Google Auth Provider configured successfully');
+  
+  if (isElectron) {
+    // Electron-specific auth configuration
+    googleProvider.setCustomParameters({
+      prompt: 'select_account',
+      access_type: 'offline'
+    });
+    console.log('✅ Google Auth Provider configured for Electron');
+  } else {
+    // Web-specific auth configuration
+    googleProvider.setCustomParameters({
+      prompt: 'select_account'
+    });
+    console.log('✅ Google Auth Provider configured for Web');
+  }
   
 } catch (error) {
   console.error('❌ Firebase initialization failed:', error);

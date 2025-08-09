@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite'
 
 export default defineConfig({
+  base: './', // Important for Electron - use relative paths
   server: {
-    port: 3001,
+    port: 5173, // Standard Vite port for Electron compatibility
     host: '0.0.0.0',
     open: true,
     // Aggressive no-cache headers for development

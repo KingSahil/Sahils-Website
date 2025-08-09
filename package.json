@@ -1,5 +1,5 @@
 {
-  "name": "sahil-gaming-hub",
+  "name": "sahilsweb",
   "private": true,
   "version": "1.0.0",
   "type": "module",
@@ -7,15 +7,19 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "electron": "cd electron && npm install && npm start",
+    "electron:dev": "cd electron && npm install && npm run dev",
+    "electron:pack": "npm run build && cd electron && npm install && npm run pack",
+    "electron:dist": "npm run build && cd electron && npm install && npm run dist",
     "pwa-build": "vite build && npx cap copy && npx cap sync",
     "android": "npx cap open android",
     "ios": "npx cap open ios",
-    "capacitor:init": "npx cap init 'Sahil Gaming Hub' 'com.sahil.gaminghub'",
+    "capacitor:init": "npx cap init 'SahilsWeb' 'com.sahil.sahilsweb'",
     "capacitor:add-android": "npx cap add android",
     "capacitor:sync": "npx cap sync"
   },
   "devDependencies": {
-    "vite": "^7.0.6"
+    "vite": "^7.1.1"
   },
   "optionalDependencies": {
     "@capacitor/android": "^5.7.8",
@@ -26,11 +30,45 @@
     "pwa",
     "games",
     "mobile-app",
-    "web-app"
+    "web-app",
+    "electron",
+    "desktop-app"
   ],
   "author": "Sahil",
-  "description": "A modern gaming hub with interactive games and tools",
+  "description": "SahilsWeb - A modern web application with games, tools, and AI assistant",
   "dependencies": {
     "firebase": "^12.0.0"
+  },
+  "build": {
+    "appId": "com.sahil.sahilsweb",
+    "productName": "SahilsWeb",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "!electron/node_modules"
+    ],
+    "extraResources": [
+      "public/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/icon.svg"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "public/icon.svg"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "public/icon.svg"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "sahil",
+      "repo": "sahilsweb"
+    }
   }
 }

@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     
+    <!-- Content Security Policy - Allow blob images for Vimeo player -->
+    <meta http-equiv="Content-Security-Policy" content="img-src 'self' data: blob: https: http:; media-src 'self' blob: https: http:; frame-src 'self' https://player.vimeo.com https://www.youtube.com https://youtube.com;">
+    
     <!-- Aggressive anti-caching meta tags -->
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
@@ -18,19 +21,40 @@
     <meta name="theme-color" content="#667eea" id="theme-color-meta" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="Sahil's Website" />
+    <meta name="apple-mobile-web-app-title" content="Sahil's Web" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="msapplication-TileColor" content="#667eea" />
     <meta name="msapplication-config" content="/browserconfig.xml" />
     <link rel="manifest" href="/manifest.json" />
-    <title>Sahil's Website Menu</title>
+    <title>Sahil's Web</title>
+    
+    <!-- Instant Auth State Script - Prevents flash of login buttons -->
+    <script>
+      // This runs immediately in the head to prevent any flash of login buttons
+      try {
+        const cachedUser = localStorage.getItem('firebase_cached_user');
+        if (cachedUser) {
+          // Inject CSS to hide auth buttons and show user menu immediately
+          const style = document.createElement('style');
+          style.textContent = `
+            #authButtons { display: none !important; }
+            #userMenu { display: flex !important; }
+          `;
+          document.head.appendChild(style);
+          console.log('⚡ Instant auth CSS injected - no flash of login buttons');
+        }
+      } catch (e) {
+        // If there's any error, fail silently and let the main script handle it
+        console.warn('⚠️ Instant auth state check failed:', e);
+      }
+    </script>
   </head>
   <body>
     <div id="app">
       <header class="app-header">
         <nav class="navigation">
           <div class="nav-brand">
-            <h1>Sahil's Website</h1>
+            <h1>Sahil's Web</h1>
           </div>
           <div class="nav-menu">
             <ul class="nav-links">
@@ -88,7 +112,7 @@
       
       <main class="main-content">
         <div class="hero-section">
-          <h2>Welcome to Sahil's Website</h2>
+          <h2>Welcome to Sahil's Web</h2>
           <p>Experience the future of web applications with our sleek and modern interface.</p>
           <div class="hero-buttons">
             <button class="btn btn-primary btn-large" id="getStartedBtn">Get Started</button>
@@ -99,9 +123,67 @@
           <!-- Hero Video Section -->
           <div class="hero-video" style="margin-top: 2rem;">
             <div style="padding:56.02% 0 0 0;position:relative;border-radius:16px;overflow:hidden;">
-              <iframe id="vimeoPlayer" src="https://player.vimeo.com/video/1105491173?badge=0&amp;autopause=0&amp;controls=0&amp;title=0&amp;byline=0&amp;portrait=0&amp;transparent=0&amp;background=1&amp;muted=1&amp;loop=1&amp;autoplay=1&amp;playsinline=1&amp;quality=auto&amp;player_id=0&amp;app_id=58479" frameborder="0" allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share" referrerpolicy="strict-origin-when-cross-origin" style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:16px;cursor:pointer;pointer-events:none;" title="Sahil's Web"></iframe>
+              <iframe id="vimeoPlayer" src="https://player.vimeo.com/video/1105491173?badge=0&amp;autopause=0&amp;controls=0&amp;title=0&amp;byline=0&amp;portrait=0&amp;transparent=0&amp;background=1&amp;muted=1&amp;loop=0&amp;autoplay=0&amp;playsinline=1&amp;quality=auto&amp;player_id=0&amp;app_id=58479" frameborder="0" allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share" referrerpolicy="strict-origin-when-cross-origin" style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:16px;cursor:pointer;pointer-events:none;" title="Sahil's Web"></iframe>
             </div>
           </div>
+        </div>
+        
+        <!-- Floating AI Chatbot Widget -->
+        <div class="floating-chatbot" id="floatingChatbot">
+          <div class="chatbot-header" id="chatbotHeader">
+            <div class="chatbot-title">
+              <span class="chatbot-icon">🤖</span>
+              <span class="chatbot-title-text">AI Assistant</span>
+              <span class="chatbot-status online">●</span>
+            </div>
+            <div class="chatbot-controls">
+              <button class="btn btn-outline btn-small" id="clearChatSmall">🗑️</button>
+              <button class="chatbot-fullscreen" id="chatbotFullscreen">⛶</button>
+              <button class="btn btn-outline btn-small" id="closeChatbot">&times;</button>
+            </div>
+          </div>
+          
+          <div class="chatbot-body" id="chatbotBody">
+            <div class="chat-messages" id="chatMessages">
+              <!-- Messages will be added dynamically -->
+            </div>
+            
+            <div class="chat-input-container">
+              <div class="chat-input-wrapper">
+                <textarea id="chatInput" placeholder="Ask me anything..."></textarea>
+                <button class="btn btn-primary" id="sendMessage" disabled>
+                  <span class="send-icon">📨</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- Chatbot Toggle Button -->
+        <div class="chatbot-toggle" id="chatbotToggle">
+          <span class="toggle-icon">💬</span>
+          <span class="notification-badge" id="chatNotification" style="display: none;">●</span>
+        </div>
+        
+        <!-- Main Menu Section -->
+        <div class="main-menu-section" id="mainMenuSection" style="display: none;">
+          <h2>What would you like to explore?</h2>
+          <p>Choose from our collection of games and tools!</p>
+          <div class="main-menu-grid">
+            <div class="menu-card" id="gamesMenuCard">
+              <div class="menu-icon">🎮</div>
+              <h3>Games</h3>
+              <p>Play fun and interactive games</p>
+              <button class="btn btn-primary">Explore Games</button>
+            </div>
+            <div class="menu-card" id="toolsMenuCard">
+              <div class="menu-icon">🛠️</div>
+              <h3>Tools</h3>
+              <p>Useful tools and utilities</p>
+              <button class="btn btn-primary">Explore Tools</button>
+            </div>
+          </div>
+          <button class="btn btn-outline" id="backToHeroFromMenu">← Back to Home</button>
         </div>
         
         <!-- Games Menu Section -->
@@ -193,6 +275,141 @@
           <div class="game-controls">
             <button class="btn btn-outline" id="resetSnakeGame">Reset Game</button>
             <button class="btn btn-outline" id="backToGamesFromSnake">← Back to Games</button>
+          </div>
+        </div>
+        
+        <!-- Tools Section -->
+        <div class="tools-section" id="toolsSection" style="display: none;">
+          <h2>Choose Your Tool</h2>
+          <p>Select a tool to help with your tasks!</p>
+          <div class="tools-grid">
+            <div class="tool-card" id="calculatorCard">
+              <div class="tool-icon">🧮</div>
+              <h3>Calculator</h3>
+              <p>Basic and scientific calculator</p>
+              <button class="btn btn-primary">Use Calculator</button>
+            </div>
+            <div class="tool-card" id="notepadCard">
+              <div class="tool-icon">📝</div>
+              <h3>Notepad</h3>
+              <p>Simple text editor and notes</p>
+              <button class="btn btn-primary">Open Notepad</button>
+            </div>
+            <div class="tool-card" id="timerCard">
+              <div class="tool-icon">⏱️</div>
+              <h3>Timer</h3>
+              <p>Countdown timer and stopwatch</p>
+              <button class="btn btn-primary">Open Timer</button>
+            </div>
+          </div>
+          <button class="btn btn-outline" id="backToMenuFromTools">← Back to Menu</button>
+        </div>
+        
+        <!-- Calculator Tool -->
+        <div class="calculator-tool" id="calculatorTool" style="display: none;">
+          <h2>Calculator</h2>
+          <div class="calculator">
+            <div class="calculator-display">
+              <input type="text" id="calculatorInput" readonly>
+            </div>
+            <div class="calculator-help">
+              <small>💡 Use your keyboard: Numbers, +, -, *, /, ^, sqrt, fact, pow, !, (, ), =, Enter, Backspace, Esc • Ctrl+A to select all • Shift+Arrow to select text</small>
+            </div>
+            <div class="calculator-buttons">
+              <button class="calc-btn clear" onclick="clearCalculator()">C</button>
+              <button class="calc-btn operator" onclick="appendToCalculator('(')">(</button>
+              <button class="calc-btn operator" onclick="appendToCalculator(')')">)</button>
+              <button class="calc-btn operator" onclick="deleteLastCalculator()">⌫</button>
+              
+              <button class="calc-btn operator" onclick="appendToCalculator('√')">√</button>
+              <button class="calc-btn operator" onclick="appendToCalculator('/')">/</button>
+              <button class="calc-btn operator" onclick="appendToCalculator('*')">×</button>
+              <button class="calc-btn operator" onclick="appendToCalculator('^')">^</button>
+              
+              <button class="calc-btn number" onclick="appendToCalculator('7')">7</button>
+              <button class="calc-btn number" onclick="appendToCalculator('8')">8</button>
+              <button class="calc-btn number" onclick="appendToCalculator('9')">9</button>
+              <button class="calc-btn operator" onclick="appendToCalculator('-')">-</button>
+              
+              <button class="calc-btn number" onclick="appendToCalculator('4')">4</button>
+              <button class="calc-btn number" onclick="appendToCalculator('5')">5</button>
+              <button class="calc-btn number" onclick="appendToCalculator('6')">6</button>
+              <button class="calc-btn operator" onclick="appendToCalculator('+')">+</button>
+              
+              <button class="calc-btn number" onclick="appendToCalculator('1')">1</button>
+              <button class="calc-btn number" onclick="appendToCalculator('2')">2</button>
+              <button class="calc-btn number" onclick="appendToCalculator('3')">3</button>
+              <button class="calc-btn operator" onclick="appendToCalculator('!')">!</button>
+              
+              <button class="calc-btn number zero-btn" onclick="appendToCalculator('0')">0</button>
+              <button class="calc-btn number" onclick="appendToCalculator('.')">.</button>
+              <button class="calc-btn equals" onclick="calculateResult()">=</button>
+            </div>
+          </div>
+          <div class="tool-controls">
+            <button class="btn btn-outline" id="backToToolsFromCalculator">← Back to Tools</button>
+          </div>
+        </div>
+        
+        <!-- Notepad Tool -->
+        <div class="notepad-tool" id="notepadTool" style="display: none;">
+          <h2>Notepad</h2>
+          <div class="notepad-container">
+            <div class="notepad">
+              <div class="notepad-toolbar">
+                <button class="btn btn-small" onclick="saveNote()">💾 Save</button>
+                <button class="btn btn-small" onclick="clearNote()">🗑️ Clear</button>
+                <button class="btn btn-small" onclick="downloadNote()">📥 Download</button>
+              </div>
+              <textarea id="notepadText" placeholder="Start typing your notes here..."></textarea>
+            </div>
+            <div class="saved-files-panel">
+              <h3>Saved Files</h3>
+              <div id="savedFilesList" class="saved-files-list">
+                <p class="no-files">No saved files</p>
+              </div>
+            </div>
+          </div>
+          <div class="tool-controls">
+            <button class="btn btn-outline" id="backToToolsFromNotepad">← Back to Tools</button>
+          </div>
+        </div>
+        
+        <!-- Timer Tool -->
+        <div class="timer-tool" id="timerTool" style="display: none;">
+          <h2>Timer & Stopwatch</h2>
+          <div class="timer-container">
+            <div class="timer-tabs">
+              <button class="timer-tab active" id="timerTab">Timer</button>
+              <button class="timer-tab" id="stopwatchTab">Stopwatch</button>
+            </div>
+            
+            <div class="timer-section" id="timerSection">
+              <div class="timer-display" id="timerDisplay">05:00</div>
+              <div class="timer-input">
+                <input type="number" id="timerMinutes" min="0" max="59" value="5" placeholder="MM">
+                <span>:</span>
+                <input type="number" id="timerSeconds" min="0" max="59" value="0" placeholder="SS">
+              </div>
+              <div class="timer-controls">
+                <button class="btn btn-primary" id="startTimer">Start</button>
+                <button class="btn btn-outline" id="pauseTimer">Pause</button>
+                <button class="btn btn-outline" id="resetTimer">Reset</button>
+              </div>
+            </div>
+            
+            <div class="stopwatch-section" id="stopwatchSection" style="display: none;">
+              <div class="stopwatch-display" id="stopwatchDisplay">00:00:00</div>
+              <div class="stopwatch-controls">
+                <button class="btn btn-primary" id="startStopwatch">Start</button>
+                <button class="btn btn-outline" id="lapStopwatch">Lap</button>
+                <button class="btn btn-outline" id="resetStopwatch">Reset</button>
+              </div>
+              <div class="lap-times" id="lapTimes"></div>
+            </div>
+          </div>
+          <div class="tool-controls">
+            <button class="btn btn-outline" id="backToToolsFromTimer">← Back to Tools</button>
           </div>
         </div>
       </main>
@@ -313,6 +530,80 @@
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="/firebase-config.js" onerror="console.error('❌ Firebase config failed to load')"></script>
+    
+    <!-- Markdown and Code Highlighting Libraries -->
+    <!-- Simplified, error-free Prism setup -->
+    <script>
+      // Completely disable Prism auto-execution to prevent errors
+      window.Prism = window.Prism || {};
+      window.Prism.manual = true;
+      window.Prism.disableWorkerMessageHandler = true;
+      
+      // Create a safe fallback for code highlighting
+      window.safePrismHighlight = function(element) {
+        try {
+          if (window.Prism && window.Prism.highlightAllUnder) {
+            window.Prism.highlightAllUnder(element);
+          }
+        } catch (e) {
+          console.warn('🎨 Prism highlighting failed safely:', e.message);
+        }
+      };
+      
+      console.log('🔧 Prism safely pre-configured');
+    </script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js" onerror="console.warn('Marked library failed to load')"></script>
+    
+    <!-- Load only essential Prism components with error handling -->
+    <script>
+      // Load Prism core with comprehensive error handling
+      (function() {
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js';
+        script.onload = function() {
+          console.log('✅ Prism loaded successfully');
+          // Reinforce manual mode after loading
+          if (window.Prism) {
+            window.Prism.manual = true;
+          }
+        };
+        script.onerror = function() {
+          console.warn('⚠️ Prism failed to load - using fallback highlighting');
+          // Create a no-op fallback
+          window.Prism = {
+            manual: true,
+            highlightAllUnder: function() { console.log('🎨 Fallback highlighting (no-op)'); }
+          };
+        };
+        document.head.appendChild(script);
+      })();
+    </script>
+    
+    <!-- Individual Prism components removed to prevent initialization errors -->
+    <!-- The main prism.min.js file includes the essential language support -->
+    
+    <!-- Keep the CSS theme for styling -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css" onerror="console.warn('Prism CSS theme failed to load')">
+    
+    <!-- MathJax for LaTeX Math Rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/core-js-bundle@3.32.0/minified.js" onerror="console.warn('Polyfill failed to load, continuing without it')"></script>
+    <script>
+      window.MathJax = {
+        tex: {
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']],
+          processEscapes: true,
+          processEnvironments: true
+        },
+        options: {
+          skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'],
+          ignoreHtmlClass: 'tex2jax_ignore',
+          processHtmlClass: 'tex2jax_process'
+        }
+      };
+    </script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     
     <script src="https://player.vimeo.com/api/player.js"></script>
     <script type="module" src="/main.js"></script>

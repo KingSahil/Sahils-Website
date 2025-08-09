@@ -1,0 +1,87 @@
+# IMPORTANT: This file prevents Vercel from uploading 1GB+ of unnecessary files
+
+# Electron desktop app files (1+ GB - NOT NEEDED FOR WEB)
+electron/
+electron-dist/
+
+# Android mobile app files (57+ MB - NOT NEEDED FOR WEB)  
+android/
+
+# Large executables and installers
+*.exe
+*.blockmap
+*.yml
+*.apk
+*.aab
+
+# Node modules (will be installed by Vercel)
+node_modules/
+
+# Build artifacts and cache
+dist/
+.cache/
+.vite/
+.temp/
+
+# Debug and test files
+debug.html
+test-app.bat
+reinstall-app.bat
+install-app.bat
+*.bat
+*.ps1
+
+# Development and configuration files not needed for web
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.vscode/
+.idea/
+.vercel/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Capacitor mobile files
+capacitor.config.json
+ios/
+*.gradle
+gradlew*
+local.properties
+
+# Documentation (keep only README)
+*.md
+!README.md
+
+# Backup and temporary files
+*-backup*
+*-original*
+*-corrupted*
+*-clean*
+*.tmp
+*.temp
+
+# Firebase debug files
+debug-firebase.js
+firebase-test.html
+
+# APK and build tools
+*.keystore
+sign-apk.*
+*build*.ps1
+*setup*.ps1
+*install*.ps1
+*install*.sh
+
+# Log files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
