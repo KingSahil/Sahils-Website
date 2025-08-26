@@ -1,5 +1,353 @@
 import './style.css'
 
+// Global references for mobile menu and modal access
+let globalCloseMobileMenu = null; // Global reference to close mobile menu
+let globalLoginModal = null;
+let globalSignupModal = null;
+let globalModalOverlay = null;
+let globalOpenModal = null;
+
+// Avatar utilities (local cache + Firestore fallback)
+// ===== Debug Log Capture (to help collect console output) =====
+// Enable capturing of console logs so they can be exported for remote debugging
+;(function setupDebugLogCapture(){
+  if (window.__APP_LOG_CAPTURE__) return; // avoid double wrapping
+  const CAPTURE_ENABLED = true; // toggle if needed
+  if (!CAPTURE_ENABLED) return;
+  const original = {
+    log: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    info: console.info.bind(console),
+    debug: console.debug ? console.debug.bind(console) : console.log.bind(console)
+  };
+  const buffer = [];
+  const MAX = 1500; // keep last 1500 entries
+  function maskSecrets(msg){
+    try {
+      if (typeof msg === 'string') {
+        // crude masking for api keys / firebase apiKey patterns
+        return msg.replace(/AIza[0-9A-Za-z\-_]{10,}/g,'[API_KEY_MASKED]');
+      }
+    } catch {}
+    return msg;
+  }
+  function push(type, args){
+    const time = new Date().toISOString();
+    const safeArgs = Array.from(args).map(maskSecrets);
+    buffer.push({ time, type, args: safeArgs });
+    if (buffer.length > MAX) buffer.splice(0, buffer.length - MAX);
+  }
+  ['log','warn','error','info','debug'].forEach(level => {
+    console[level] = function(){
+      push(level, arguments);
+      original[level](...arguments);
+    };
+  });
+  window.__APP_LOG_CAPTURE__ = {
+    getLogs: () => buffer.slice(),
+    clear: () => { buffer.length = 0; },
+    download: () => {
+      try {
+        const blob = new Blob([JSON.stringify(buffer,null,2)], { type: 'application/json' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'app-console-logs.json';
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+      } catch(e) { original.error('Failed to download logs', e); }
+    }
+  };
+  window.getAppLogs = () => window.__APP_LOG_CAPTURE__.getLogs();
+  window.downloadAppLogs = () => window.__APP_LOG_CAPTURE__.download();
+  original.log('📝 Console log capture enabled. Use getAppLogs() or downloadAppLogs().');
+})();
+
+// Helper to quickly inspect auth + avatar state
+window.debugAuthState = function(){
+  const auth = window.firebaseAuth;
+  const user = auth && auth.currentUser;
+  const cached = localStorage.getItem('firebase_cached_user');
+  const parsedCached = (()=>{ try { return JSON.parse(cached); } catch { return null; } })();
+  return {
+    hasAuth: !!auth,
+    user: user ? {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      photoURL: user.photoURL,
+      providerData: user.providerData
+    } : null,
+    cachedUser: parsedCached,
+    localAvatarCacheKeys: Object.keys(localStorage).filter(k=>k.startsWith('avatar_cache_')),
+    avatarElementSrc: (document.getElementById('userAvatar')||{}).src || null,
+    location: window.location.href
+  };
+};
+
+// Local cache key helper
+function avatarCacheKey(uid) {
+  return `avatar_cache_${uid}`;
+}
+
+function getCachedAvatar(uid) {
+  try {
+    const raw = localStorage.getItem(avatarCacheKey(uid));
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    // Expire after 7 days
+    if (Date.now() - (data.cachedAt || 0) > 7 * 24 * 60 * 60 * 1000) {
+      localStorage.removeItem(avatarCacheKey(uid));
+      return null;
+    }
+    return data.url || null;
+  } catch { return null; }
+}
+
+function setCachedAvatar(uid, url) {
+  try {
+    localStorage.setItem(avatarCacheKey(uid), JSON.stringify({
+      url: url,
+      cachedAt: Date.now()
+    }));
+  } catch (error) {
+    console.warn('⚠️ Failed to cache avatar:', error);
+  }
+}
+
+// Improved image URL testing function
+function testImageUrl(url, timeout = 5000) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    let done = false;
+    const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+    
+    img.onload = () => {
+      console.log('✅ Image loaded successfully:', url);
+      finish(true);
+    };
+    
+    img.onerror = () => {
+      console.log('❌ Image failed to load:', url);
+      finish(false);
+    };
+    
+    // For Google avatars, don't add cache-busting parameters as they can break the URL
+    if (url.includes('googleusercontent.com')) {
+      img.src = url;
+    } else {
+      // Add cache-busting only for non-Google URLs
+      img.src = url + (url.includes('?') ? '&' : '?') + '_avtest=' + Date.now();
+    }
+    
+    setTimeout(() => {
+      if (!done) {
+        console.log('⏰ Image test timeout:', url);
+        finish(false);
+      }
+    }, timeout);
+  });
+}
+
+// Firestore persistence (optional)
+async function saveAvatarToFirestore(user, avatarUrl) {
+  try {
+    const db = window.firebaseDb;
+    if (!db) {
+      console.warn('⚠️ Firestore not available for avatar storage');
+      return false;
+    }
+    
+    console.log('💾 Saving avatar to Firestore for user:', user.uid);
+    
+    await db.collection('userAvatars').doc(user.uid).set({
+      avatarUrl: avatarUrl,
+      userId: user.uid,
+      userEmail: user.email,
+      lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+      source: 'google'
+    });
+    
+    console.log('✅ Avatar saved to Firestore successfully');
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to save avatar to Firestore:', error);
+    return false;
+  }
+}
+
+async function loadAvatarFromFirestore(user) {
+  try {
+    const db = window.firebaseDb;
+    if (!db) {
+      console.warn('⚠️ Firestore not available for avatar loading');
+      return null;
+    }
+    
+    console.log('📥 Loading avatar from Firestore for user:', user.uid);
+    
+    const doc = await db.collection('userAvatars').doc(user.uid).get();
+    
+    if (doc.exists) {
+      const data = doc.data();
+      console.log('✅ Avatar loaded from Firestore:', data.avatarUrl);
+      return data.avatarUrl;
+    } else {
+      console.log('ℹ️ No saved avatar found in Firestore');
+      return null;
+    }
+  } catch (error) {
+    console.error('❌ Failed to load avatar from Firestore:', error);
+    return null;
+  }
+}
+
+// Improved Google avatar processing
+async function processAndSaveGoogleAvatar(user) {
+  try {
+    const rawUrl = user.photoURL;
+    if (!rawUrl) {
+      console.log('ℹ️ User has no photoURL');
+      return null;
+    }
+    
+    // For non-Google avatars, test the URL directly
+    if (!/googleusercontent\.com/i.test(rawUrl)) {
+      console.log('ℹ️ Non-Google avatar, using provided URL directly');
+      const ok = await testImageUrl(rawUrl);
+      if (ok) {
+        setCachedAvatar(user.uid, rawUrl);
+        saveAvatarToFirestore(user, rawUrl); // fire & forget
+        return rawUrl;
+      }
+      return null;
+    }
+
+    console.log('🔧 Processing Google avatar:', rawUrl);
+
+    // Test the original URL first
+    const originalOk = await testImageUrl(rawUrl);
+    if (originalOk) {
+      console.log('✅ Original Google avatar URL works:', rawUrl);
+      setCachedAvatar(user.uid, rawUrl);
+      saveAvatarToFirestore(user, rawUrl);
+      return rawUrl;
+    }
+
+    // If original doesn't work, try different size parameters
+    const baseUrl = rawUrl.split('?')[0].replace(/=s\d+(-c)?/gi, '');
+    
+    // Common Google avatar size parameters
+    const sizeParams = [
+      '=s96-c',  // 96px with crop
+      '=s128-c', // 128px with crop
+      '=s192-c', // 192px with crop
+      '=s256-c', // 256px with crop
+      '=s96',    // 96px without crop
+      '=s128',   // 128px without crop
+      '=s192',   // 192px without crop
+      '=s256'    // 256px without crop
+    ];
+
+    // Test each size variant
+    for (const sizeParam of sizeParams) {
+      const testUrl = baseUrl + sizeParam;
+      console.log('🧪 Testing Google avatar variant:', testUrl);
+      
+      const ok = await testImageUrl(testUrl);
+      if (ok) {
+        console.log('✅ Working Google avatar URL found:', testUrl);
+        setCachedAvatar(user.uid, testUrl);
+        saveAvatarToFirestore(user, testUrl);
+        return testUrl;
+      }
+    }
+
+    // If no size variants work, try the original URL without any parameters
+    const cleanUrl = baseUrl;
+    console.log('🧪 Testing clean Google avatar URL:', cleanUrl);
+    const cleanOk = await testImageUrl(cleanUrl);
+    if (cleanOk) {
+      console.log('✅ Clean Google avatar URL works:', cleanUrl);
+      setCachedAvatar(user.uid, cleanUrl);
+      saveAvatarToFirestore(user, cleanUrl);
+      return cleanUrl;
+    }
+
+    console.warn('❌ No working Google avatar variant found');
+    return null;
+  } catch (error) {
+    console.error('❌ Error processing Google avatar:', error);
+    return null;
+  }
+}
+
+// Main Firebase Avatar Loading Function
+async function loadUserAvatarFromFirebase(user, userAvatarElement) {
+  const nameForFallback = (user.displayName || user.email.split('@')[0] || 'User').trim();
+  
+  function setFallbackAvatar() {
+    const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(nameForFallback)}&background=667eea&color=fff&size=64&rounded=true&bold=true`;
+    userAvatarElement.src = fallbackUrl;
+    console.log('🎨 Using generated avatar as fallback');
+  }
+  
+  try {
+    // Step 0: Local cache first
+    const cached = getCachedAvatar(user.uid);
+    if (cached) {
+      const ok = await testImageUrl(cached, 4000);
+      if (ok) {
+        userAvatarElement.src = cached;
+        console.log('✅ Loaded avatar from local cache');
+        return;
+      } else {
+        console.log('⚠️ Cached avatar invalid, clearing');
+        localStorage.removeItem(avatarCacheKey(user.uid));
+      }
+    }
+
+    // Step 1: Firestore
+    console.log('📥 Attempting to load avatar from Firestore...');
+    const storedAvatarUrl = await loadAvatarFromFirestore(user);
+    if (storedAvatarUrl) {
+      const ok = await testImageUrl(storedAvatarUrl, 5000);
+      if (ok) {
+        userAvatarElement.src = storedAvatarUrl;
+        console.log('✅ Firestore avatar loaded successfully');
+        setCachedAvatar(user.uid, storedAvatarUrl);
+        return;
+      } else {
+        console.warn('⚠️ Stored Firestore avatar invalid, will process new Google avatar');
+      }
+    }
+
+    // Step 2: Process new Google avatar or fallback to original photoURL
+    console.log('ℹ️ Processing Google avatar variants...');
+    processNewGoogleAvatar();
+  } catch (error) {
+    console.error('❌ Error in Firebase avatar loading:', error);
+    setFallbackAvatar();
+  }
+  
+  async function processNewGoogleAvatar() {
+    try {
+      const workingAvatarUrl = await processAndSaveGoogleAvatar(user);
+      
+      if (workingAvatarUrl) {
+        userAvatarElement.src = workingAvatarUrl;
+        console.log('✅ New Google avatar processed and loaded');
+      } else {
+        console.warn('⚠️ Could not process Google avatar, using fallback');
+        setFallbackAvatar();
+      }
+    } catch (error) {
+      console.error('❌ Error processing new Google avatar:', error);
+      setFallbackAvatar();
+    }
+  }
+}
+
 // App version for cache busting
 const APP_VERSION = '2.1.0';
 const VERSION_CHECK_INTERVAL = 60000; // Check every 60 seconds (reduced frequency)
@@ -252,6 +600,62 @@ function dismissUpdate() {
   }
 }
 
+// Function to manually refresh avatar
+window.refreshAvatar = function() {
+  const auth = window.firebaseAuth;
+  const userAvatar = document.getElementById('userAvatar');
+  
+  if (!auth || !auth.currentUser) {
+    console.log('❌ No authenticated user to refresh avatar');
+    return;
+  }
+  
+  if (!userAvatar) {
+    console.log('❌ User avatar element not found');
+    return;
+  }
+  
+  console.log('🔄 Manually refreshing avatar...');
+  
+  // Clear cache and reload
+  localStorage.removeItem(avatarCacheKey(auth.currentUser.uid));
+  loadUserAvatarFromFirebase(auth.currentUser, userAvatar);
+  
+  console.log('✅ Avatar refresh initiated');
+};
+
+// Function to debug logout functionality
+window.debugLogout = function() {
+  console.log('🔍 Debugging logout functionality...');
+  
+  const auth = window.firebaseAuth;
+  const logoutBtn = document.getElementById('logoutBtn');
+  
+  console.log('🔧 Firebase auth object:', !!auth);
+  console.log('🔧 Current user:', auth?.currentUser?.email);
+  console.log('🔧 Logout button element:', !!logoutBtn);
+  console.log('🔧 Logout button display:', logoutBtn?.style.display);
+  console.log('🔧 Logout button visibility:', logoutBtn?.style.visibility);
+  console.log('🔧 Logout button disabled:', logoutBtn?.disabled);
+  
+  if (logoutBtn) {
+    console.log('🔧 Logout button clickable:', !logoutBtn.disabled && logoutBtn.style.display !== 'none');
+    console.log('🔧 Logout button event listeners:', logoutBtn.onclick);
+  }
+  
+  // Test if we can call signOut directly
+  if (auth && auth.currentUser) {
+    console.log('🧪 Testing direct signOut call...');
+    auth.signOut().then(() => {
+      console.log('✅ Direct signOut successful');
+    }).catch((error) => {
+      console.error('❌ Direct signOut failed:', error);
+    });
+  } else {
+    console.log('ℹ️ No user to sign out');
+  }
+};
+
 // App initialization
 document.addEventListener('DOMContentLoaded', function() {
   // INSTANT AUTH STATE: Set initial display state BEFORE any other initialization
@@ -279,10 +683,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         if (userAvatar && userData.photoURL) {
+          // For instant display, use the cached photoURL directly
           userAvatar.src = userData.photoURL;
+          console.log('⚡ Instant avatar set from cache:', userData.photoURL);
         } else if (userAvatar) {
           const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.displayName || userData.email)}&background=667eea&color=fff&size=64&rounded=true`;
           userAvatar.src = fallbackUrl;
+          console.log('⚡ Instant fallback avatar set');
         }
         
         console.log('⚡ Initial DOM state set to logged-in user with data (no flash)');
@@ -468,18 +875,31 @@ document.addEventListener('DOMContentLoaded', function() {
       
       // Update avatar if not already set  
       if (userAvatar && userData.photoURL && !userAvatar.src) {
-        // Preload the avatar for better performance
-        const img = new Image();
-        img.onload = () => {
-          userAvatar.src = userData.photoURL;
-          console.log('⚡ Cached avatar preloaded and updated');
-        };
-        img.onerror = () => {
-          const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.displayName || userData.email)}&background=667eea&color=fff&size=64&rounded=true`;
-          userAvatar.src = fallbackUrl;
-          console.log('⚡ Cached avatar failed, using fallback');
-        };
-        img.src = userData.photoURL;
+        // For Google avatars, use the improved loading system
+        if (userData.photoURL.includes('googleusercontent.com')) {
+          console.log('⚡ Cached Google avatar detected, using improved loading');
+          // Create a temporary user object for the avatar loading function
+          const tempUser = {
+            uid: userData.uid,
+            email: userData.email,
+            displayName: userData.displayName,
+            photoURL: userData.photoURL
+          };
+          loadUserAvatarFromFirebase(tempUser, userAvatar);
+        } else {
+          // For non-Google avatars, preload for better performance
+          const img = new Image();
+          img.onload = () => {
+            userAvatar.src = userData.photoURL;
+            console.log('⚡ Cached avatar preloaded and updated');
+          };
+          img.onerror = () => {
+            const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.displayName || userData.email)}&background=667eea&color=fff&size=64&rounded=true`;
+            userAvatar.src = fallbackUrl;
+            console.log('⚡ Cached avatar failed, using fallback');
+          };
+          img.src = userData.photoURL;
+        }
       } else if (userAvatar && !userAvatar.src) {
         const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userData.displayName || userData.email)}&background=667eea&color=fff&size=64&rounded=true`;
         userAvatar.src = fallbackUrl;
@@ -504,6 +924,34 @@ document.addEventListener('DOMContentLoaded', function() {
 // Make functions globally available for onclick handlers
 window.updateApp = updateApp;
 window.dismissUpdate = dismissUpdate;
+
+// Debug functions for avatar testing
+window.clearAvatarCache = function() {
+  const keys = Object.keys(localStorage).filter(key => 
+    key.startsWith('avatar_cache_') || key.startsWith('avatar_google_rate_block_')
+  );
+  keys.forEach(key => localStorage.removeItem(key));
+  console.log('🧹 Cleared avatar cache:', keys.length, 'items removed');
+};
+
+window.testAvatarLoad = function() {
+  const user = auth.currentUser;
+  if (user && user.photoURL) {
+    console.log('🧪 Testing avatar load for:', user.email);
+    console.log('🔗 Original photoURL:', user.photoURL);
+    
+    // Clear cache and reload
+    window.clearAvatarCache();
+    
+    // Trigger avatar reload
+    const userAvatar = document.getElementById('userAvatar');
+    if (userAvatar) {
+      showUserMenuWithElements(user, document.getElementById('authButtons'), document.getElementById('userMenu'));
+    }
+  } else {
+    console.log('❌ No user signed in or no photoURL');
+  }
+};
 
 // Make notepad functions globally available
 window.saveNote = saveNote;
@@ -562,26 +1010,63 @@ window.testAvatar = function() {
   console.log('🖼️ Original photoURL:', avatarUrl);
   
   if (avatarUrl && avatarUrl.includes('googleusercontent.com')) {
-    // Test URL processing
-    let processedUrl = avatarUrl.replace(/=s\d+-c/, '').replace(/=s\d+/, '');
-    if (processedUrl.includes('=')) {
-      processedUrl += '&s=64';
-    } else {
-      processedUrl += '=s64-c';
-    }
-    console.log('🔧 Processed URL:', processedUrl);
+    // Test the improved avatar processing
+    console.log('🔧 Testing improved Google avatar processing...');
     
-    // Test if URLs are accessible
-    const testUrls = [avatarUrl, processedUrl];
-    testUrls.forEach((url, index) => {
-      const img = new Image();
-      img.onload = () => console.log(`✅ URL ${index + 1} loads successfully:`, url);
-      img.onerror = () => console.log(`❌ URL ${index + 1} failed to load:`, url);
-      img.src = url;
+    // Test original URL
+    testImageUrl(avatarUrl).then(ok => {
+      console.log(`✅ Original URL test: ${ok ? 'SUCCESS' : 'FAILED'}`);
+    });
+    
+    // Test base URL without parameters
+    const baseUrl = avatarUrl.split('?')[0].replace(/=s\d+(-c)?/gi, '');
+    testImageUrl(baseUrl).then(ok => {
+      console.log(`✅ Base URL test: ${ok ? 'SUCCESS' : 'FAILED'}`);
+    });
+    
+    // Test common size variants
+    const sizeParams = ['=s96-c', '=s128-c', '=s192-c', '=s256-c'];
+    sizeParams.forEach(sizeParam => {
+      const testUrl = baseUrl + sizeParam;
+      testImageUrl(testUrl).then(ok => {
+        console.log(`✅ ${sizeParam} test: ${ok ? 'SUCCESS' : 'FAILED'}`);
+      });
     });
   }
   
-  return { originalUrl: avatarUrl };
+  return { 
+    originalUrl: avatarUrl,
+    user: {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName,
+      photoURL: user.photoURL
+    }
+  };
+};
+
+// Function to manually refresh avatar
+window.refreshAvatar = function() {
+  const auth = window.firebaseAuth;
+  const userAvatar = document.getElementById('userAvatar');
+  
+  if (!auth || !auth.currentUser) {
+    console.log('❌ No authenticated user to refresh avatar');
+    return;
+  }
+  
+  if (!userAvatar) {
+    console.log('❌ User avatar element not found');
+    return;
+  }
+  
+  console.log('🔄 Manually refreshing avatar...');
+  
+  // Clear cache and reload
+  localStorage.removeItem(avatarCacheKey(auth.currentUser.uid));
+  loadUserAvatarFromFirebase(auth.currentUser, userAvatar);
+  
+  console.log('✅ Avatar refresh initiated');
 };
 
 // Debug function for testing notepad file operations
@@ -856,6 +1341,7 @@ function setupNavigationLinks() {
 function navigateToSection(section, addToHistory = true) {
   const heroSection = document.querySelector('.hero-section');
   const mainMenuSection = document.getElementById('mainMenuSection');
+  const portfolioSection = document.getElementById('portfolioSection');
   const gamesSection = document.getElementById('gamesSection');
   const toolsSection = document.getElementById('toolsSection');
   const ticTacToeGame = document.getElementById('ticTacToeGame');
@@ -874,6 +1360,7 @@ function navigateToSection(section, addToHistory = true) {
   // Hide all sections first
   heroSection.style.display = 'none';
   mainMenuSection.style.display = 'none';
+  portfolioSection.style.display = 'none';
   gamesSection.style.display = 'none';
   toolsSection.style.display = 'none';
   ticTacToeGame.style.display = 'none';
@@ -919,6 +1406,9 @@ function navigateToSection(section, addToHistory = true) {
       break;
     case 'mainmenu':
       mainMenuSection.style.display = 'block';
+      break;
+    case 'portfolio':
+      portfolioSection.style.display = 'block';
       break;
     case 'tools':
       toolsSection.style.display = 'block';
@@ -967,7 +1457,7 @@ function updateHeroContent(section) {
   const heroTitle = document.querySelector('.hero-section h2');
   const heroText = document.querySelector('.hero-section p');
   const getStartedBtn = document.getElementById('getStartedBtn');
-  const learnMoreBtn = document.getElementById('learnMoreBtn');
+  const portfolioBtn = document.getElementById('portfolioBtn');
   const emojiBtn = document.getElementById('emojiBtn');
   
   const content = {
@@ -1012,23 +1502,23 @@ function updateHeroContent(section) {
   if (sectionContent.showGamesButton) {
     getStartedBtn.style.display = 'inline-flex';
     getStartedBtn.textContent = 'Get Started';
-    learnMoreBtn.style.display = 'inline-flex';
-    learnMoreBtn.textContent = 'Learn More';
+    portfolioBtn.style.display = 'inline-flex';
+    portfolioBtn.textContent = 'Portfolio';
     emojiBtn.style.display = 'none';
   } else {
     getStartedBtn.style.display = 'inline-flex';
-    getStartedBtn.textContent = section === 'contact' ? 'Contact Us' : section === 'features' ? 'Go Back to Home' : 'Learn More';
+    getStartedBtn.textContent = section === 'contact' ? 'Contact Us' : section === 'features' ? 'Go Back to Home' : 'View Portfolio';
     
-    // Show Learn More button only on home page, show emoji button only on features page
+    // Show Portfolio button only on home page, show emoji button only on features page
     if (section === 'home') {
-      learnMoreBtn.style.display = 'inline-flex';
-      learnMoreBtn.textContent = 'Learn More';
+      portfolioBtn.style.display = 'inline-flex';
+      portfolioBtn.textContent = 'Portfolio';
       emojiBtn.style.display = 'none';
     } else if (section === 'features') {
-      learnMoreBtn.style.display = 'none';
+      portfolioBtn.style.display = 'none';
       emojiBtn.style.display = 'inline-flex';
     } else {
-      learnMoreBtn.style.display = 'none';
+      portfolioBtn.style.display = 'none';
       emojiBtn.style.display = 'none';
     }
   }
@@ -1130,6 +1620,11 @@ function setupMobileMenu() {
     document.body.style.overflow = 'auto';
   }
 
+  // Expose closeMobileMenu globally
+  globalCloseMobileMenu = closeMobileMenu;
+  
+  console.log('🔧 Global closeMobileMenu function set:', !!globalCloseMobileMenu);
+
   // Event listeners
   mobileToggle.addEventListener('click', openMobileMenu);
   mobileMenuClose.addEventListener('click', closeMobileMenu);
@@ -1219,6 +1714,17 @@ function setupAuthentication() {
   const loginModalClose = document.getElementById('loginModalClose');
   const signupModalClose = document.getElementById('signupModalClose');
   
+  // Set global references for mobile access
+  globalLoginModal = loginModal;
+  globalSignupModal = signupModal;
+  globalModalOverlay = modalOverlay;
+  
+  console.log('🔧 Global modal references set:', {
+    globalLoginModal: !!globalLoginModal,
+    globalSignupModal: !!globalSignupModal,
+    globalModalOverlay: !!globalModalOverlay
+  });
+  
   // Form elements
   const loginForm = document.getElementById('loginForm');
   const signupForm = document.getElementById('signupForm');
@@ -1264,9 +1770,26 @@ function setupAuthentication() {
       showNotification('Authentication setup incomplete. Please refresh the page.', 'warning');
     });
   
+  // Handle redirect result for Google Sign-In (when popup auth fails)
+  auth.getRedirectResult().then((result) => {
+    if (result && result.user) {
+      console.log('✅ Redirect authentication successful:', result.user.email);
+      // The onAuthStateChanged listener will handle the UI updates
+    }
+  }).catch((error) => {
+    if (error.code !== 'auth/operation-not-allowed') {
+      console.error('❌ Redirect authentication error:', error);
+    }
+  });
+  
   // Optimized auth state listener for instant UI updates
   auth.onAuthStateChanged((user) => {
     console.log('🔥 Auth state changed:', user ? `User logged in: ${user.email}` : 'User logged out');
+    console.log('🔧 Auth state change details:', {
+      user: user ? { email: user.email, uid: user.uid } : null,
+      timestamp: new Date().toISOString(),
+      stack: new Error().stack?.split('\n').slice(1, 4).join('\n')
+    });
     
     if (isProduction) {
       console.log('🌐 PRODUCTION Auth state change on domain:', currentDomain, user ? 'LOGGED IN' : 'LOGGED OUT');
@@ -1368,7 +1891,85 @@ function setupAuthentication() {
   
   logoutBtn?.addEventListener('click', (e) => {
     e.preventDefault();
-    console.log('👋 Logout requested');
+    console.log('👋 Logout button clicked');
+    console.log('🔧 Logout button element:', logoutBtn);
+    console.log('🔧 Event details:', { type: e.type, target: e.target.id });
+    handleLogout();
+  });
+
+  // Mobile auth button event listeners
+  const mobileLoginBtn = document.getElementById('mobileLoginBtn');
+  const mobileSignupBtn = document.getElementById('mobileSignupBtn');
+  const mobileLogoutBtn = document.getElementById('mobileLogoutBtn');
+
+  console.log('🔧 Mobile auth button elements found:', {
+    mobileLoginBtn: !!mobileLoginBtn,
+    mobileSignupBtn: !!mobileSignupBtn,
+    mobileLogoutBtn: !!mobileLogoutBtn
+  });
+
+  mobileLoginBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    console.log('🔑 Mobile login button clicked');
+    console.log('🔧 Global functions available:', {
+      globalCloseMobileMenu: !!globalCloseMobileMenu,
+      globalOpenModal: !!globalOpenModal,
+      globalLoginModal: !!globalLoginModal
+    });
+    
+    if (isProduction) {
+      console.log('🌐 PRODUCTION: Opening mobile login modal on domain:', currentDomain);
+    }
+    
+    // Close mobile menu first
+    if (globalCloseMobileMenu) {
+      globalCloseMobileMenu();
+    }
+    
+    // Open login modal using global reference
+    if (globalOpenModal && globalLoginModal) {
+      globalOpenModal(globalLoginModal);
+    } else {
+      console.error('❌ Global modal references not available');
+    }
+  });
+
+  mobileSignupBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    console.log('📝 Mobile signup button clicked');
+    console.log('🔧 Global functions available:', {
+      globalCloseMobileMenu: !!globalCloseMobileMenu,
+      globalOpenModal: !!globalOpenModal,
+      globalSignupModal: !!globalSignupModal
+    });
+    
+    if (isProduction) {
+      console.log('🌐 PRODUCTION: Opening mobile signup modal on domain:', currentDomain);
+    }
+    
+    // Close mobile menu first
+    if (globalCloseMobileMenu) {
+      globalCloseMobileMenu();
+    }
+    
+    // Open signup modal using global reference
+    if (globalOpenModal && globalSignupModal) {
+      globalOpenModal(globalSignupModal);
+    } else {
+      console.error('❌ Global modal references not available');
+    }
+  });
+
+  mobileLogoutBtn?.addEventListener('click', (e) => {
+    e.preventDefault();
+    console.log('👋 Mobile logout button clicked');
+    console.log('🔧 Mobile logout button element:', mobileLogoutBtn);
+    console.log('🔧 Event details:', { type: e.type, target: e.target.id });
+    
+    // Close mobile menu first
+    if (globalCloseMobileMenu) {
+      globalCloseMobileMenu();
+    }
     handleLogout();
   });
   
@@ -1449,95 +2050,32 @@ function setupAuthentication() {
     const userAvatar = document.getElementById('userAvatar');
     const userName = document.getElementById('userName');
     
+    // Also handle mobile elements
+    const mobileAuthButtons = document.getElementById('mobileAuthButtons');
+    const mobileUserMenu = document.getElementById('mobileUserMenu');
+    const mobileUserAvatar = document.getElementById('mobileUserAvatar');
+    const mobileUserName = document.getElementById('mobileUserName');
+    
+    if (mobileAuthButtons) mobileAuthButtons.style.display = 'none';
+    if (mobileUserMenu) mobileUserMenu.style.display = 'flex';
+    
     // Add Electron update button if in Electron environment
     if (window.electronAPI) {
       setTimeout(() => addElectronUpdateButton(), 100);
     }
     
     if (userAvatar) {
-      // Enhanced avatar handling with fallback and error handling
-      const avatarUrl = user.photoURL;
+      console.log('🖼️ Setting up Firebase-based avatar system for user:', user.uid);
       
-      if (avatarUrl) {
-        // Enhanced Google photo URL processing - ENABLED
-        let processedUrl = avatarUrl;
-        console.log('� Original photoURL:', avatarUrl);
-        
-        // If it's a Google profile photo, ensure we have the right size parameter
-        if (avatarUrl.includes('googleusercontent.com')) {
-          // Remove existing size parameters and add our own for better compatibility
-          processedUrl = avatarUrl.replace(/=s\d+-c/, '').replace(/=s\d+/, '');
-          
-          // Add proper size parameter for Google photos
-          if (processedUrl.includes('=')) {
-            // URL already has parameters, append size
-            processedUrl += '&s=64';
-          } else {
-            // No parameters, add size parameter
-            processedUrl += '=s64-c';
-          }
-          console.log('🔧 Processed Google photo URL:', processedUrl);
-        }
-        
-        // If it's a Google profile photo, ensure we have the right size parameter
-        if (avatarUrl.includes('googleusercontent.com')) {
-          // Remove existing size parameters and add our own for better compatibility
-          processedUrl = avatarUrl.replace(/=s\d+-c/, '').replace(/=s\d+/, '');
-          
-          // Add proper size parameter for Google photos
-          if (processedUrl.includes('=')) {
-            // URL already has parameters, append size
-            processedUrl += '&s=64';
-          } else {
-            // No parameters, add size parameter
-            processedUrl += '=s64-c';
-          }
-          console.log('🔧 Processed Google photo URL:', processedUrl);
-        }
-        
-        // Use the processed Google photo URL
-        userAvatar.src = processedUrl;
-        console.log('🖼️ Setting avatar to processed URL');
-      } else {
-        // No Google photo, use generated avatar
-        const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email)}&background=667eea&color=fff&size=64&rounded=true`;
-        userAvatar.src = fallbackUrl;
-        console.log('� No Google photo, using generated avatar:', fallbackUrl);
-      }
-      
-      // Add comprehensive error handling for the avatar element
-      userAvatar.onload = () => {
-        console.log('✅ Avatar loaded successfully');
-      };
-      
-      userAvatar.onerror = () => {
-        console.log('⚠️ Avatar load failed, trying fallback');
-        
-        // If we tried a processed Google URL and it failed, try the original
-        if (avatarUrl && avatarUrl.includes('googleusercontent.com') && userAvatar.src !== avatarUrl) {
-          console.log('🔄 Processed Google URL failed, trying original:', avatarUrl);
-          userAvatar.src = avatarUrl;
-          
-          // Set up second-level fallback
-          userAvatar.onerror = () => {
-            console.log('🎨 Google photo failed, using generated avatar');
-            const userName = user.displayName || user.email.split('@')[0];
-            const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=667eea&color=fff&size=64&rounded=true`;
-            userAvatar.src = fallbackUrl;
-            userAvatar.onerror = null; // Prevent infinite loops
-          };
-        } else {
-          // Use generated avatar as fallback
-          const userName = user.displayName || user.email.split('@')[0];
-          const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=667eea&color=fff&size=64&rounded=true`;
-          userAvatar.src = fallbackUrl;
-          userAvatar.onerror = null; // Prevent infinite loops
-        }
-      };
-      
-      console.log('�🖼️ User avatar setup completed');
+      // Firebase-based avatar loading with fallback
+      loadUserAvatarFromFirebase(user, userAvatar);
     } else {
       console.warn('⚠️ User avatar element not found');
+    }
+    
+    // Update mobile avatar too
+    if (mobileUserAvatar) {
+      loadUserAvatarFromFirebase(user, mobileUserAvatar);
     }
     
     if (userName) {
@@ -1545,6 +2083,11 @@ function setupAuthentication() {
       console.log('📝 User name updated:', userName.textContent);
     } else {
       console.warn('⚠️ User name element not found');
+    }
+    
+    // Update mobile user name too
+    if (mobileUserName) {
+      mobileUserName.textContent = user.displayName || user.email.split('@')[0];
     }
     
     console.log('✅ User menu displayed successfully');
@@ -1562,8 +2105,38 @@ function setupAuthentication() {
   }
   
   function showAuthButtonsWithElements(authButtonsEl, userMenuEl) {
-    authButtonsEl.style.display = 'flex';
-    userMenuEl.style.display = 'none';
+    console.log('🔧 Showing auth buttons...');
+    console.log('🔧 Auth buttons element:', !!authButtonsEl);
+    console.log('🔧 User menu element:', !!userMenuEl);
+    
+    if (authButtonsEl) {
+      authButtonsEl.style.display = 'flex';
+      console.log('✅ Auth buttons display set to flex');
+    } else {
+      console.error('❌ Auth buttons element not found');
+    }
+    
+    if (userMenuEl) {
+      userMenuEl.style.display = 'none';
+      console.log('✅ User menu display set to none');
+    } else {
+      console.error('❌ User menu element not found');
+    }
+    
+    // Also handle mobile elements
+    const mobileAuthButtons = document.getElementById('mobileAuthButtons');
+    const mobileUserMenu = document.getElementById('mobileUserMenu');
+    
+    if (mobileAuthButtons) {
+      mobileAuthButtons.style.display = 'flex';
+      console.log('✅ Mobile auth buttons display set to flex');
+    }
+    
+    if (mobileUserMenu) {
+      mobileUserMenu.style.display = 'none';
+      console.log('✅ Mobile user menu display set to none');
+    }
+    
     console.log('✅ Auth buttons displayed successfully');
   }
   
@@ -1582,6 +2155,11 @@ function setupAuthentication() {
       setTimeout(() => firstInput.focus(), 300);
     }
   }
+  
+  // Expose openModal globally
+  globalOpenModal = openModal;
+  
+  console.log('🔧 Global openModal function set:', !!globalOpenModal);
   
   function closeModal(modal) {
     modal.classList.remove('active');
@@ -1660,8 +2238,45 @@ function setupAuthentication() {
     }
     
     try {
-      // Use signInWithPopup for better persistence support
-      const result = await auth.signInWithPopup(googleProvider);
+      // Try popup auth first, fallback to redirect if popup fails due to COOP/CSP
+      let result;
+      try {
+        console.log('🔐 Attempting popup authentication...');
+        // Use signInWithPopup for better UX
+        result = await auth.signInWithPopup(googleProvider);
+        console.log('✅ Popup authentication successful');
+      } catch (popupError) {
+        console.warn('⚠️ Popup auth failed:', popupError.message);
+        
+        // Check if it's a popup-related error or COOP/CSP issue
+        if (popupError.code === 'auth/popup-blocked' || 
+            popupError.code === 'auth/popup-closed-by-user' ||
+            popupError.code === 'auth/cancelled-popup-request' ||
+            popupError.message.includes('popup') ||
+            popupError.message.includes('Cross-Origin-Opener-Policy') ||
+            popupError.message.includes('window.closed')) {
+          
+          console.log('🔄 Popup blocked or COOP issue, switching to redirect authentication');
+          
+          // Show loading state before redirect
+          showNotification('Redirecting to Google Sign-In...', 'info');
+          
+          // Small delay to show the notification
+          setTimeout(async () => {
+            try {
+              await auth.signInWithRedirect(googleProvider);
+            } catch (redirectError) {
+              console.error('❌ Redirect authentication also failed:', redirectError);
+              showNotification('Authentication failed. Please try again.', 'error');
+            }
+          }, 500);
+          
+          return; // Exit early as redirect will handle the rest
+        } else {
+          throw popupError; // Re-throw if it's not popup-related
+        }
+      }
+      
       const user = result.user;
       
       console.log('✅ Google authentication successful:', {
@@ -1678,6 +2293,9 @@ function setupAuthentication() {
       
       // The auth state will be automatically persisted by Firebase
       showNotification(`Welcome, ${user.displayName || user.email}! 🎉`, 'success');
+      
+      // Close any open modals after successful login
+      closeAllModals();
       
       // Debug user info including photo URL
       console.log('👤 User profile info:', {
@@ -1735,10 +2353,26 @@ function setupAuthentication() {
   
   async function handleLogout() {
     try {
+      console.log('🔄 Starting logout process...');
+      console.log('🔧 Auth object state:', !!auth);
+      console.log('🔧 Current user before logout:', auth?.currentUser?.email);
+      
+      if (!auth) {
+        console.error('❌ Auth object is null or undefined');
+        showNotification('Authentication service not available. Please refresh the page.', 'error');
+        return;
+      }
+      
       await auth.signOut();
+      console.log('✅ Firebase signOut completed successfully');
       showNotification('Successfully logged out! 👋', 'info');
     } catch (error) {
-      console.error('Logout error:', error);
+      console.error('❌ Logout error:', error);
+      console.error('❌ Error details:', {
+        code: error.code,
+        message: error.message,
+        stack: error.stack
+      });
       showNotification('Error logging out. Please try again.', 'error');
     }
   }
@@ -2279,7 +2913,7 @@ function setupButtonShimmer() {
 // Games Navigation
 function setupGamesNavigation() {
   const getStartedBtn = document.getElementById('getStartedBtn');
-  const learnMoreBtn = document.getElementById('learnMoreBtn');
+  const portfolioBtn = document.getElementById('portfolioBtn');
   const emojiBtn = document.getElementById('emojiBtn');
   const backToHero = document.getElementById('backToHero');
   const backToGames = document.getElementById('backToGames');
@@ -2309,10 +2943,10 @@ function setupGamesNavigation() {
     if (currentHash === '#home') {
       navigateToSection('mainmenu', true);
       showNotification('Choose what you\'d like to explore! 🚀', 'success');
-    } else if (getStartedBtn.textContent === 'Learn More') {
-      // Navigate to features section when "Learn More" is clicked
-      navigateToSection('features', true);
-      showNotification('Check out our amazing features! ✨', 'info');
+    } else if (getStartedBtn.textContent === 'View Portfolio') {
+      // Navigate to portfolio section when "View Portfolio" is clicked
+      navigateToSection('portfolio', true);
+      showNotification('Check out my amazing projects! 🚀', 'info');
     } else if (getStartedBtn.textContent === 'Go Back to Home') {
       // Navigate back to home when "Go Back to Home" is clicked
       navigateToSection('home', true);
@@ -2343,6 +2977,7 @@ function showContactCard() {
     youtube: `<svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#FF0000"/><path d="M19 14v20l13-10-13-10z" fill="white"/></svg>`,
     discord: `<svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#5865F2"/><path d="M38.5 15.5c-1.2-.5-2.4-1-3.8-1.2-.2.3-.4.7-.5 1-1.4-.2-2.8-.2-4.2 0-.2-.3-.3-.7-.5-1-1.4.2-2.6.7-3.8 1.2-2.9 4.3-3.7 8.5-3.3 12.6 1.6 1.2 3.1 1.9 4.6 2.3.4-.5.7-1 1-1.6-.5-.2-1-.4-1.5-.7.1-.1.3-.2.4-.3 2.9 1.3 6.1 1.3 9 0 .1.1.3.2.4.3-.5.3-1 .5-1.5.7.3.6.6 1.1 1 1.6 1.5-.4 3-1.1 4.6-2.3.5-4.8-.8-8.9-3.4-12.6zM30.2 26c-.8 0-1.5-.7-1.5-1.6s.7-1.6 1.5-1.6 1.5.7 1.5 1.6-.7 1.6-1.5 1.6zm5.6 0c-.8 0-1.5-.7-1.5-1.6s.7-1.6 1.5-1.6 1.5.7 1.5 1.6-.7 1.6-1.5 1.6z" fill="white"/></svg>`,
     linkedin: `<svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#0077B5"/><path d="M13 16h5v16h-5V16zm2.5-8c1.4 0 2.5 1.1 2.5 2.5S16.9 13 15.5 13 13 11.9 13 10.5 14.1 8 15.5 8zM35 32V24c0-3.3-2.7-6-6-6-1.7 0-3.2.9-4 2.3V18h-5v14h5v-7c0-1.1.9-2 2-2s2 .9 2 2v7h6z" fill="white"/></svg>`,
+    github: `<svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#181717"/><path d="M24 8c-8.8 0-16 7.2-16 16 0 7.1 4.6 13.1 10.9 15.2.8.1 1.1-.3 1.1-.7v-2.6c-4.5 1-5.4-2.2-5.4-2.2-.7-1.8-1.7-2.3-1.7-2.3-1.4-1 .1-.9.1-.9 1.5.1 2.3 1.5 2.3 1.5 1.3 2.3 3.5 1.6 4.4 1.2.1-1 .5-1.6 1-2-3.3-.4-6.8-1.7-6.8-7.4 0-1.6.6-3 1.5-4-.2-.4-.7-2 .1-4.2 0 0 1.3-.4 4.1 1.5 1.2-.3 2.5-.5 3.8-.5s2.6.2 3.8.5c2.9-1.9 4.1-1.5 4.1-1.5.8 2.2.3 3.8.1 4.2 1 1 1.5 2.4 1.5 4 0 5.8-3.5 7-6.8 7.4.5.5 1 1.4 1 2.8v4.1c0 .4.3.9 1.1.7C39.4 37.1 44 31.1 44 24c0-8.8-7.2-16-16-16z" fill="white"/></svg>`,
     instagram: `<svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="url(#ig-gradient)"/><defs><linearGradient id="ig-gradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#ff7a00"/><stop offset="25%" stop-color="#ff0169"/><stop offset="50%" stop-color="#d300c5"/><stop offset="75%" stop-color="#7638fa"/><stop offset="100%" stop-color="#4f46e5"/></linearGradient></defs><rect x="12" y="12" width="24" height="24" rx="6" fill="none" stroke="white" stroke-width="2.5"/><circle cx="24" cy="24" r="5.5" fill="none" stroke="white" stroke-width="2.5"/><circle cx="31" cy="17" r="1.5" fill="white"/></svg>`,
     reddit: `<svg width="28" height="28" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="48" height="48" rx="8" fill="#FF4500"/><circle cx="24" cy="26" r="12" fill="white"/><circle cx="19" cy="23" r="2" fill="#FF4500"/><circle cx="29" cy="23" r="2" fill="#FF4500"/><ellipse cx="24" cy="30" rx="4" ry="2" fill="#FF4500"/><circle cx="24" cy="14" r="3" fill="white"/><rect x="22" y="8" width="4" height="8" fill="white"/></svg>`
   };
@@ -2386,6 +3021,10 @@ function showContactCard() {
       </a>
       <a href='https://www.linkedin.com/in/kingsahil/' target='_blank' rel='noopener' class='social-link' data-platform='linkedin' style='display:flex;align-items:center;gap:0.7rem;text-decoration:none;background:rgba(255,255,255,0.10);padding:0.7rem 1rem;border-radius:0.7rem;transition:all 0.3s cubic-bezier(0.4, 0, 0.2, 1);color:#fff;font-weight:500;position:relative;overflow:hidden;'>
         ${icons.linkedin} <span style='font-weight:500;'>LinkedIn</span>
+        <span style='margin-left:auto;font-size:1.1rem;'>@KingSahil</span>
+      </a>
+      <a href='https://www.github.com/kingsahil' target='_blank' rel='noopener' class='social-link' data-platform='github' style='display:flex;align-items:center;gap:0.7rem;text-decoration:none;background:rgba(255,255,255,0.10);padding:0.7rem 1rem;border-radius:0.7rem;transition:all 0.3s cubic-bezier(0.4, 0, 0.2, 1);color:#fff;font-weight:500;position:relative;overflow:hidden;'>
+        ${icons.github} <span style='font-weight:500;'>GitHub</span>
         <span style='margin-left:auto;font-size:1.1rem;'>@KingSahil</span>
       </a>
       <a href='https://www.instagram.com/supreme__sahil/' target='_blank' rel='noopener' class='social-link' data-platform='instagram' style='display:flex;align-items:center;gap:0.7rem;text-decoration:none;background:rgba(255,255,255,0.10);padding:0.7rem 1rem;border-radius:0.7rem;transition:all 0.3s cubic-bezier(0.4, 0, 0.2, 1);color:#fff;font-weight:500;position:relative;overflow:hidden;'>
@@ -2483,6 +3122,7 @@ function showContactCard() {
       youtube: '#FF0000',
       discord: '#5865F2', 
       linkedin: '#0077B5',
+      github: '#181717',
       instagram: '#E4405F',
       reddit: '#FF4500'
     };
@@ -2566,11 +3206,11 @@ function showContactCard() {
   }, 30000);
 }
 
-  // Learn More button functionality
-  if (learnMoreBtn) {
-    learnMoreBtn.addEventListener('click', () => {
-      navigateToSection('features', true);
-      showNotification('Discover our amazing features! ✨', 'info');
+  // Portfolio button functionality
+  if (portfolioBtn) {
+    portfolioBtn.addEventListener('click', () => {
+      navigateToSection('portfolio', true);
+      showNotification('Check out my amazing projects! 🚀', 'info');
     });
   }
 
@@ -2634,6 +3274,14 @@ function showContactCard() {
   backToHeroFromMenu.addEventListener('click', () => {
     navigateToSection('home', true);
   });
+
+  // Back to home from portfolio
+  const backToHeroFromPortfolio = document.getElementById('backToHeroFromPortfolio');
+  if (backToHeroFromPortfolio) {
+    backToHeroFromPortfolio.addEventListener('click', () => {
+      navigateToSection('home', true);
+    });
+  }
 
   // Tools navigation
   calculatorCard.querySelector('.btn').addEventListener('click', () => {
@@ -3174,6 +3822,18 @@ function setupVideoPlayer() {
             
             console.log('Android touchstart detected - entering fullscreen with audio');
             
+            // Initialize audio context on user interaction for Android
+            try {
+              const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+              if (audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                  console.log('Audio context resumed on user interaction');
+                });
+              }
+            } catch (audioError) {
+              console.log('Audio context creation failed on touch:', audioError);
+            }
+            
             // Animate play button
             animatePlayButton();
             
@@ -3300,9 +3960,13 @@ function setupVideoPlayer() {
         closeButton.style.transform = 'scale(1)';
       });
       
-      // Create new iframe for fullscreen (clean, controls-free experience)
+      // Create new iframe for fullscreen with Android-optimized parameters
       const fullscreenIframe = document.createElement('iframe');
-      fullscreenIframe.src = 'https://player.vimeo.com/video/1105491173?badge=0&autopause=0&controls=0&title=0&byline=0&portrait=0&transparent=0&background=0&muted=0&loop=0&autoplay=1&playsinline=1&quality=auto&keyboard=0&pip=0&dnt=1';
+      
+      // Enhanced URL parameters for better Android audio support with all overlays hidden
+      const androidOptimizedUrl = 'https://player.vimeo.com/video/1105491173?badge=0&autopause=0&controls=0&title=0&byline=0&portrait=0&transparent=0&background=0&muted=0&loop=0&autoplay=1&playsinline=1&quality=auto&keyboard=1&pip=0&dnt=1&h=1&s=1&logo=0&color=ffffff';
+      
+      fullscreenIframe.src = androidOptimizedUrl;
       fullscreenIframe.style.cssText = `
         position: absolute;
         top: 0;
@@ -3313,7 +3977,11 @@ function setupVideoPlayer() {
         border-radius: 12px;
         background: #000;
       `;
-      fullscreenIframe.allow = 'autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share';
+      
+      // Enhanced allow attributes for Android audio support
+      fullscreenIframe.allow = 'autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share; microphone; camera';
+      fullscreenIframe.allowfullscreen = true;
+      fullscreenIframe.allowtransparency = true;
       
       // Assemble fullscreen overlay
       videoContainer.appendChild(fullscreenIframe);
@@ -3323,6 +3991,44 @@ function setupVideoPlayer() {
       
       // Prevent body scroll
       document.body.style.overflow = 'hidden';
+      
+      // Android-specific audio initialization
+      if (isAndroid) {
+        console.log('🔧 Android detected - initializing audio context and user interaction');
+        
+        // Create a hidden audio context to unlock audio on Android
+        try {
+          const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          if (audioContext.state === 'suspended') {
+            console.log('Audio context suspended - attempting to resume');
+            await audioContext.resume();
+          }
+          console.log('Audio context state:', audioContext.state);
+        } catch (audioError) {
+          console.log('Audio context creation failed:', audioError);
+        }
+        
+        // Add a click handler to the iframe to ensure user interaction
+        setTimeout(() => {
+          try {
+            fullscreenIframe.addEventListener('load', () => {
+              console.log('Fullscreen iframe loaded - ensuring audio is enabled');
+              
+              // Try to send a message to the iframe to enable audio
+              try {
+                fullscreenIframe.contentWindow.postMessage({
+                  method: 'setVolume',
+                  value: 1
+                }, '*');
+              } catch (postMessageError) {
+                console.log('PostMessage to iframe failed:', postMessageError);
+              }
+            });
+          } catch (iframeError) {
+            console.log('Iframe event listener failed:', iframeError);
+          }
+        }, 100);
+      }
       
       // Animate in
       setTimeout(() => {
@@ -5661,9 +6367,9 @@ function getAIAvatar() {
   // Then check provider for general icons
   switch (currentProvider) {
     case 'googlestudio':
-      return '�'; // Google Gemini diamond
+      return '🤖'; // Google Gemini diamond
     case 'huggingface':
-      return '�'; // Hugging Face emoji
+      return '🤖'; // Hugging Face emoji
     default:
       return '🤖'; // Default robot
   }
@@ -5822,7 +6528,7 @@ function initializeChatbot() {
       this.value = value.substring(0, start) + '\n' + value.substring(end);
       this.selectionStart = this.selectionEnd = start + 1;
       
-      console.log('� Newline inserted at cursor position');
+      console.log('📝 Newline inserted at cursor position');
       
       // Update button state
       updateSendButtonState();
@@ -6734,7 +7440,7 @@ async function getHuggingFaceResponse(message) {
       content: `You are a helpful AI assistant for a web app with games and tools. Be contextual and complete:
 
 • Focus on app navigation (games: Snake, Memory, Tic Tac Toe; tools: Calculator, Notepad, Timer)
-• Help users switch models ("use deepseek", "use glm", etc.")
+• Help users switch models ("use deepseek", "use glm", etc.)
 • Answer educational and technical questions fully and clearly
 • **ALWAYS use LaTeX math formatting**: $inline$ math and $$display$$ math for equations
 • Use emojis and bullet points for clarity

@@ -3,8 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     
-    <!-- Content Security Policy - Allow blob images for Vimeo player -->
-    <meta http-equiv="Content-Security-Policy" content="img-src 'self' data: blob: https: http:; media-src 'self' blob: https: http:; frame-src 'self' https://player.vimeo.com https://www.youtube.com https://youtube.com;">
+    <!-- Content Security Policy - Permissive for Google auth during development -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https:; img-src 'self' data: blob: https:; media-src 'self' blob: https: http:; frame-src 'self' https:; connect-src 'self' https: wss:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https:; style-src 'self' 'unsafe-inline' https:; font-src 'self' https:; object-src 'none';">
     
     <!-- Aggressive anti-caching meta tags -->
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
@@ -39,6 +39,8 @@
           style.textContent = `
             #authButtons { display: none !important; }
             #userMenu { display: flex !important; }
+            #mobileAuthButtons { display: none !important; }
+            #mobileUserMenu { display: flex !important; }
           `;
           document.head.appendChild(style);
           console.log('⚡ Instant auth CSS injected - no flash of login buttons');
@@ -105,6 +107,21 @@
               <li><a href="#about">ℹ️ About</a></li>
               <li><a href="#contact">📞 Contact</a></li>
             </ul>
+            
+            <!-- Mobile Auth Section -->
+            <div class="mobile-auth-section" id="mobileAuthButtons">
+              <button class="btn btn-outline btn-small" id="mobileLoginBtn">🔑 Login</button>
+              <button class="btn btn-primary btn-small" id="mobileSignupBtn">👤 Sign Up</button>
+            </div>
+            
+            <!-- Mobile User Menu -->
+            <div class="mobile-user-section" id="mobileUserMenu" style="display: none;">
+              <div class="mobile-user-info">
+                <img id="mobileUserAvatar" src="" alt="User" class="mobile-user-avatar">
+                <span id="mobileUserName" class="mobile-user-name"></span>
+              </div>
+              <button class="btn btn-outline btn-small" id="mobileLogoutBtn">🚪 Logout</button>
+            </div>
           </div>
         </div>
         <div class="mobile-menu-overlay" id="mobileMenuOverlay"></div>
@@ -116,14 +133,14 @@
           <p>Experience the future of web applications with our sleek and modern interface.</p>
           <div class="hero-buttons">
             <button class="btn btn-primary btn-large" id="getStartedBtn">Get Started</button>
-            <button class="btn btn-outline btn-large" id="learnMoreBtn">Learn More</button>
+            <button class="btn btn-outline btn-large" id="portfolioBtn">Portfolio</button>
             <button class="btn btn-outline btn-large" id="emojiBtn" style="display: none;">😊</button>
           </div>
           
           <!-- Hero Video Section -->
           <div class="hero-video" style="margin-top: 2rem;">
             <div style="padding:56.02% 0 0 0;position:relative;border-radius:16px;overflow:hidden;">
-              <iframe id="vimeoPlayer" src="https://player.vimeo.com/video/1105491173?badge=0&amp;autopause=0&amp;controls=0&amp;title=0&amp;byline=0&amp;portrait=0&amp;transparent=0&amp;background=1&amp;muted=1&amp;loop=0&amp;autoplay=0&amp;playsinline=1&amp;quality=auto&amp;player_id=0&amp;app_id=58479" frameborder="0" allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share" referrerpolicy="strict-origin-when-cross-origin" style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:16px;cursor:pointer;pointer-events:none;" title="Sahil's Web"></iframe>
+              <iframe id="vimeoPlayer" src="https://player.vimeo.com/video/1105491173?badge=0&amp;autopause=0&amp;controls=0&amp;title=0&amp;byline=0&amp;portrait=0&amp;transparent=0&amp;background=1&amp;muted=1&amp;loop=0&amp;autoplay=0&amp;playsinline=1&amp;quality=auto&amp;player_id=0&amp;app_id=58479&amp;h=1&amp;s=1&amp;pip=0&amp;dnt=1&amp;logo=0&amp;color=ffffff" frameborder="0" allow="autoplay; fullscreen; picture-in-picture; clipboard-write; encrypted-media; web-share; microphone; camera" referrerpolicy="strict-origin-when-cross-origin" style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:16px;cursor:pointer;pointer-events:none;" title="Sahil's Web" allowfullscreen allowtransparency></iframe>
             </div>
           </div>
         </div>
@@ -211,6 +228,43 @@
             </div>
           </div>
           <button class="btn btn-outline" id="backToHero">← Back to Home</button>
+        </div>
+        
+        <!-- Portfolio Section -->
+        <div class="portfolio-section" id="portfolioSection" style="display: none;">
+          <h2 class="portfolio-title">My Portfolio</h2>
+          <p class="portfolio-subtitle">Check out my projects and achievements!</p>
+          <div class="portfolio-card-grid">
+            <div class="portfolio-card-modern">
+              <div class="portfolio-card-icon">🐾</div>
+              <div class="portfolio-card-title">Coco the Runner</div>
+              <div class="portfolio-card-tech">Python Game</div>
+              <div class="portfolio-card-desc">An exciting endless runner game featuring Coco navigating through challenging obstacles.</div>
+              <a href="https://prosahil.itch.io/coco-the-runner" target="_blank" class="btn btn-primary portfolio-card-btn">Play Game</a>
+            </div>
+            <div class="portfolio-card-modern">
+              <div class="portfolio-card-icon">🎓</div>
+              <div class="portfolio-card-title">CS50x Certificate</div>
+              <div class="portfolio-card-tech">Harvard University</div>
+              <div class="portfolio-card-desc">Successfully completed Harvard's CS50x Introduction to Computer Science course.</div>
+              <a href="/CS50x.pdf" target="_blank" rel="noopener" class="btn btn-primary portfolio-card-btn">View Certificate</a>
+            </div>
+            <div class="portfolio-card-modern">
+              <div class="portfolio-card-icon">🧪</div>
+              <div class="portfolio-card-title">The Science Lab</div>
+              <div class="portfolio-card-tech">Godot Engine</div>
+              <div class="portfolio-card-desc">An educational adventure game exploring scientific concepts through interactive gameplay.</div>
+              <a href="https://github.com/KingSahil/the-science-lab" target="_blank" class="btn btn-primary portfolio-card-btn">View Source</a>
+            </div>
+            <div class="portfolio-card-modern">
+              <div class="portfolio-card-icon">📗</div>
+              <div class="portfolio-card-title">GNDU Attendance System</div>
+              <div class="portfolio-card-tech">Web App</div>
+              <div class="portfolio-card-desc">A system to manage and track attendance efficiently for GNDU.</div>
+              <a href="https://github.com/KingSahil/GNDU-Attendance-System" target="_blank" class="btn btn-primary portfolio-card-btn">View Source</a>
+            </div>
+          </div>
+          <button class="btn btn-outline" id="backToHeroFromPortfolio">← Back to Home</button>
         </div>
         
         <!-- Tic Tac Toe Game -->
@@ -529,6 +583,7 @@
     <!-- Firebase SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <script src="/firebase-config.js" onerror="console.error('❌ Firebase config failed to load')"></script>
     
     <!-- Markdown and Code Highlighting Libraries -->
